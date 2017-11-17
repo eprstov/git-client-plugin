@@ -856,6 +856,7 @@ public class CliGitAPIImpl extends LegacyCompatibleGitAPIImpl {
 
             Integer n = null;
             Writer out = null;
+            File ws = workspace;
 
             public ChangelogCommand excludes(String rev) {
                 revs.add(sanitize('^'+rev));
@@ -885,6 +886,12 @@ public class CliGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 return this;
             }
 
+            @Override
+            public ChangelogCommand workspace(String ws) {
+                this.ws = new File( workspace, ws );
+                return this;
+            }
+
             public void abort() {
                 /* No cleanup needed to abort the CliGitAPIImpl ChangelogCommand */
             }
@@ -903,10 +910,54 @@ public class CliGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 // Commit messages in that byte stream are UTF-8 encoded.
                 // We want to decode bytestream to strings using UTF-8 encoding.
                 try (WriterOutputStream w = new WriterOutputStream(out, Charset.forName("UTF-8"))) {
-                    if (launcher.launch().cmds(args).envs(environment).stdout(w).stderr(listener.getLogger()).pwd(workspace).join() != 0)
-                        throw new GitException("Error launching git whatchanged");
+                    if (launcher.launch().cmds(args).envs(environment).stdout(w).stderr(listener.getLogger()).pwd(ws).join() != 0)
+                        throw new GitException("Error: " + args + " in " + ws);
                 } catch (IOException e) {
-                    throw new GitException("Error launching git whatchanged",e);
+                    throw new GitException("Error: " + args + " in " + ws, e);
+                }
+            }
+        };
+    }
+
+    /**
+     * submoduleStatus.
+     *
+     * @return a {@link org.jenkinsci.plugins.gitclient.ChangelogCommand} object.
+     */
+    @Override
+    public SubmoduleStatusCommand submoduleStatus() {
+        return new SubmoduleStatusCommand() {
+
+            Writer out = null;
+            boolean recursive = false;
+
+            @Override
+            public SubmoduleStatusCommand recursive(boolean recursive) {
+                this.recursive = recursive;
+                return this;
+            }
+
+            @Override
+            public SubmoduleStatusCommand to(Writer w)  {
+                this.out = w;
+                return this;
+            }
+
+            @Override
+            public void execute() throws GitException, InterruptedException {
+                ArgumentListBuilder args = new ArgumentListBuilder(gitExe, "submodule", "status");
+                if( recursive ) {
+                    args.add("--recursive");
+                }
+
+                if( out==null ) throw new IllegalStateException();
+
+                try( WriterOutputStream w = new WriterOutputStream(out, Charset.forName("UTF-8")) ) {
+                    if (launcher.launch().cmds(args).envs(environment).stdout(w).stderr(listener.getLogger()).pwd(workspace).join() != 0)
+                        throw new GitException("Error: " + args + " in " + workspace);
+                }
+                catch (IOException e) {
+                    throw new GitException("Error: " + args + " in " + workspace, e);
                 }
             }
         };

@@ -794,6 +794,12 @@ public interface GitClient {
     void setupSubmoduleUrls( Revision rev, TaskListener listener ) throws GitException, InterruptedException;
 
 
+    /**
+     * submoduleStatus.
+     *
+     */
+    SubmoduleStatusCommand submoduleStatus();
+
     // --- commit log and notes
 
     /**

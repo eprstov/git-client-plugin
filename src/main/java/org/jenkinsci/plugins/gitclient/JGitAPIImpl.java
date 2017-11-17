@@ -1111,6 +1111,11 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 return this;
             }
 
+            @Override
+            public ChangelogCommand workspace(String ws) {
+                return this;
+            }
+
             private void closeResources() {
                 walk.close();
                 or.close();
@@ -2117,9 +2122,9 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
         };
     }
 
-
-
-
+    public org.jenkinsci.plugins.gitclient.SubmoduleStatusCommand submoduleStatus() {
+        throw new UnsupportedOperationException();
+    }
 
     //
     //

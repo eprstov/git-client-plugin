@@ -110,6 +110,14 @@ public interface ChangelogCommand extends GitCommand {
     ChangelogCommand max(int n);
 
     /**
+     * Path to the workspace.
+     *
+     * @param s a String.
+     * @return a {@link org.jenkinsci.plugins.gitclient.ChangelogCommand} object.
+     */
+    ChangelogCommand workspace(String s);
+
+    /**
      * Abort this ChangelogCommand without executing it, close any
      * open resources.  The JGit implementation of changelog
      * calculation opens the git repository and will close it when the

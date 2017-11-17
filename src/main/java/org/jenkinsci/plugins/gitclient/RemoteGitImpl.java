@@ -784,6 +784,12 @@ class RemoteGitImpl implements GitClient, IGitAPI, Serializable {
     }
 
     /** {@inheritDoc} */
+    @Override
+    public SubmoduleStatusCommand submoduleStatus() {
+        return command(SubmoduleStatusCommand.class);
+    }
+
+    /** {@inheritDoc} */
     public void fetch(String repository, String refspec) throws GitException, InterruptedException {
         getGitAPI().fetch(repository, refspec);
     }

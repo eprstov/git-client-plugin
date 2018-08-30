@@ -127,6 +127,7 @@ import com.google.common.collect.Lists;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import hudson.plugins.git.GitObject;
 import org.eclipse.jgit.api.RebaseCommand.Operation;
 import org.eclipse.jgit.api.RebaseResult;
 
@@ -279,10 +280,19 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 return this;
             }
 
-            @Override
-            public CheckoutCommand lfsRemote(String lfsRemote) {
+            private CheckoutCommand lfsCheckoutIsNotSupported() {
                 listener.getLogger().println("[WARNING] JGit doesn't support LFS checkout. This flag is ignored.");
                 return this;
+            }
+
+            @Override
+            public CheckoutCommand lfsRemote(String lfsRemote) {
+                return lfsCheckoutIsNotSupported();
+            }
+
+            @Override
+            public CheckoutCommand lfsCredentials(StandardCredentials lfsCredentials) {
+                return lfsCheckoutIsNotSupported();
             }
 
             public void execute() throws GitException, InterruptedException {
@@ -576,20 +586,20 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 try (Repository repo = getRepository()) {
                     Git git = git(repo);
 
-                    List<RefSpec> refSpecs = new ArrayList<>();
+                    List<RefSpec> allRefSpecs = new ArrayList<>();
                     if (tags) {
                         // see http://stackoverflow.com/questions/14876321/jgit-fetch-dont-update-tag
-                        refSpecs.add(new RefSpec("+refs/tags/*:refs/tags/*"));
+                        allRefSpecs.add(new RefSpec("+refs/tags/*:refs/tags/*"));
                     }
                     if (refspecs != null)
                         for (RefSpec rs: refspecs)
                             if (rs != null)
-                                refSpecs.add(rs);
+                                allRefSpecs.add(rs);
 
                     if (shouldPrune) {
                         // since prune is broken in JGit, we go the trivial way:
                         // delete all refs matching the right side of the refspecs
-                        // then fetch and let the git recreate them.
+                        // then fetch and let git recreate them.
                         List<Ref> refs = git.branchList().setListMode(ListBranchCommand.ListMode.REMOTE).call();
 
                         List<String> toDelete = new ArrayList<>(refs.size());
@@ -597,7 +607,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                         for (ListIterator<Ref> it = refs.listIterator(); it.hasNext(); ) {
                             Ref branchRef = it.next();
                             if (!branchRef.isSymbolic()) { // Don't delete HEAD and other symbolic refs
-                                for (RefSpec rs : refSpecs) {
+                                for (RefSpec rs : allRefSpecs) {
                                     if (rs.matchDestination(branchRef)) {
                                         toDelete.add(branchRef.getName());
                                         break;
@@ -616,7 +626,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                     fetch.setRemote(url.toString());
                     fetch.setCredentialsProvider(getProvider());
 
-                    fetch.setRefSpecs(refSpecs);
+                    fetch.setRefSpecs(allRefSpecs);
                     // fetch.setRemoveDeletedRefs(shouldPrune);
 
                     fetch.call();
@@ -1056,6 +1066,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
      *
      * @return a {@link org.jenkinsci.plugins.gitclient.ChangelogCommand} object.
      */
+    @Override
     public ChangelogCommand changelog() {
         return new ChangelogCommand() {
             Repository repo = getRepository();
@@ -1064,6 +1075,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
             Writer out;
             boolean hasIncludedRev = false;
 
+            @Override
             public ChangelogCommand excludes(String rev) {
                 try {
                     return excludes(repo.resolve(rev));
@@ -1072,12 +1084,13 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 }
             }
 
+            @Override
             public ChangelogCommand excludes(ObjectId rev) {
                 try {
                     walk.markUninteresting(walk.lookupCommit(rev));
                     return this;
                 } catch (IOException e) {
-                    throw new GitException(e);
+                    throw new GitException("Error: jgit excludes() in " + workspace + " " + e.getMessage(), e);
                 }
             }
 
@@ -1091,21 +1104,24 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 }
             }
 
+            @Override
             public ChangelogCommand includes(ObjectId rev) {
                 try {
                     walk.markStart(walk.lookupCommit(rev));
                     hasIncludedRev = true;
                     return this;
                 } catch (IOException e) {
-                    throw new GitException(e);
+                    throw new GitException("Error: jgit includes() in " + workspace + " " + e.getMessage(), e);
                 }
             }
 
+            @Override
             public ChangelogCommand to(Writer w) {
                 this.out = w;
                 return this;
             }
 
+            @Override
             public ChangelogCommand max(int n) {
                 walk.setRevFilter(MaxCountRevFilter.create(n));
                 return this;
@@ -1122,6 +1138,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 repo.close();
             }
 
+            @Override
             public void abort() {
                 closeResources();
             }
@@ -1133,7 +1150,11 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
              * or abort must be called for each ChangelogCommand or
              * files will remain open.
              */
+            @Override
             public void execute() throws GitException, InterruptedException {
+                if (out == null) {
+                    throw new IllegalStateException(); // Match CliGitAPIImpl
+                }
                 try (PrintWriter pw = new PrintWriter(out,false)) {
                     RawFormatter formatter= new RawFormatter();
                     if (!hasIncludedRev) {
@@ -1147,7 +1168,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                         formatter.format(commit, null, pw, true);
                     }
                 } catch (IOException e) {
-                    throw new GitException(e);
+                    throw new GitException("Error: jgit whatchanged in " + workspace + " " + e.getMessage(), e);
                 } finally {
                     closeResources();
                 }
@@ -1416,10 +1437,12 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                             else {
                                 try {
                                     File alternates = new File(workspace, ".git/objects/info/alternates");
+                                    String absoluteReference = objectsPath.getAbsolutePath().replace('\\', '/');
+                                    listener.getLogger().println("Using reference repository: " + reference);
                                     // git implementations on windows also use
                                     try (PrintWriter w = new PrintWriter(alternates, "UTF-8")) {
                                         // git implementations on windows also use
-                                        w.print(objectsPath.getAbsolutePath().replace('\\', '/'));
+                                        w.print(absoluteReference);
                                     }
                                 } catch (FileNotFoundException e) {
                                     listener.error("Failed to setup reference");
@@ -1880,6 +1903,7 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
     {
         return new RevListCommand() {
             public boolean all;
+            public boolean nowalk;
             public boolean firstParent;
             public String refspec;
             public List<ObjectId> out;
@@ -1891,6 +1915,11 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
             @Override
             public RevListCommand all(boolean all) {
                 this.all = all;
+                return this;
+            }
+
+            public RevListCommand nowalk(boolean nowalk) {
+                this.nowalk = nowalk;
                 return this;
             }
 
@@ -1922,6 +1951,19 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
                 try (Repository repo = getRepository();
                      ObjectReader or = repo.newObjectReader();
                      RevWalk walk = new RevWalk(or)) {
+
+                    if (nowalk) {
+                        RevCommit c = walk.parseCommit(repo.resolve(refspec));
+                        out.add(c.copy());
+
+                        if (all) {
+                            for (Ref r : repo.getAllRefs().values()) {
+                                c = walk.parseCommit(r.getObjectId());
+                                out.add(c.copy());
+                            }
+                        }
+                        return;
+                    }
 
                     if (all)
                     {
@@ -2122,8 +2164,9 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
         };
     }
 
-    public org.jenkinsci.plugins.gitclient.SubmoduleStatusCommand submoduleStatus() {
-        throw new UnsupportedOperationException();
+    public org.jenkinsci.plugins.gitclient.SubmoduleStatusCommand submoduleStatus()
+    {
+    	throw new UnsupportedOperationException();
     }
 
     //
@@ -2634,5 +2677,33 @@ public class JGitAPIImpl extends LegacyCompatibleGitAPIImpl {
         } catch (IOException ioe) {
             throw new GitException(ioe);
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Set<GitObject> getTags() throws GitException, InterruptedException {
+        Set<GitObject> peeledTags = new HashSet<>();
+        Set<String> tagNames = new HashSet<>();
+        try (Repository repo = getRepository()) {
+            Map<String, Ref> tagsRead = repo.getTags();
+            for (Map.Entry<String, Ref> entry : tagsRead.entrySet()) {
+                /* Prefer peeled ref if available (for tag commit), otherwise take first tag reference seen */
+                String tagName = entry.getKey();
+                Ref tagRef = entry.getValue();
+                if (!entry.getValue().isPeeled()) {
+                    Ref peeledRef = repo.peel(tagRef);
+                    if (peeledRef.getPeeledObjectId() != null) {
+                        tagRef = peeledRef; // Use peeled ref instead of annotated ref
+                    }
+                }
+                if (tagRef.isPeeled()) {
+                    peeledTags.add(new GitObject(tagName, tagRef.getPeeledObjectId()));
+                } else if (!tagNames.contains(tagName)) {
+                    peeledTags.add(new GitObject(tagName, tagRef.getObjectId()));
+                }
+                tagNames.add(entry.getKey());
+            }
+        }
+        return peeledTags;
     }
 }

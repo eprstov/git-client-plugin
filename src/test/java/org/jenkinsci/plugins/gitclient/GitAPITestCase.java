@@ -245,6 +245,8 @@ public abstract class GitAPITestCase extends TestCase {
 
         WorkingArea init() throws IOException, InterruptedException {
             git.init();
+            git.setAuthor("root", "root@mydomain.com");
+            git.setCommitter("root", "root@domain.com");
             return this;
         }
 
@@ -475,6 +477,17 @@ public abstract class GitAPITestCase extends TestCase {
         }
     }
 
+    private void assertBranchesNotExist(Set<Branch> branches, String ... names) throws InterruptedException {
+        Collection<String> branchNames = Collections2.transform(branches, new Function<Branch, String>() {
+            public String apply(Branch branch) {
+                return branch.getName();
+            }
+        });
+        for (String name : names) {
+            assertFalse(name + " branch found in " + branchNames, branchNames.contains(name));
+        }
+    }
+
     public void test_setAuthor() throws Exception {
         final String authorName = "Test Author";
         final String authorEmail = "jenkins@example.com";
@@ -601,6 +614,9 @@ public abstract class GitAPITestCase extends TestCase {
         assertBranchesExist(w.git.getBranches(), "master");
         assertAlternateFilePointsToLocalMirror();
         assertNoObjectsInRepository();
+        // Verify JENKINS-46737 expected log message is written
+        String messages = StringUtils.join(handler.getMessages(), ";");
+        assertTrue("Reference repo not logged in: " + messages, handler.containsMessageSubstring("Using reference repository: "));
     }
 
     private void assertNoObjectsInRepository() {
@@ -1299,20 +1315,24 @@ public abstract class GitAPITestCase extends TestCase {
         int expectedBranchCount = 3;
         if (newArea.git instanceof CliGitAPIImpl && !w.cgit().isAtLeastVersion(1, 7, 9, 0)) {
             expectedBranchCount = 4;
+            assertBranchesExist(remoteBranches, "origin/master", "origin/branch1", "origin/branch2", "origin/HEAD");
+        } else {
+            assertBranchesExist(remoteBranches, "origin/master", "origin/branch2", "origin/HEAD");
+            assertBranchesNotExist(remoteBranches, "origin/branch1");
         }
-        assertEquals("Wrong count in " + remoteBranches, expectedBranchCount, remoteBranches.size());
+        assertEquals("Wrong remote branch count", expectedBranchCount, remoteBranches.size());
     }
 
     public void test_fetch_from_url() throws Exception {
         WorkingArea r = new WorkingArea();
         r.init();
         r.commitEmpty("init");
-        String sha1 = r.cmd("git rev-list --max-count=1 HEAD");
+        String sha1 = r.cmd("git rev-list --no-walk --max-count=1 HEAD");
 
         w.init();
         w.cmd("git remote add origin " + r.repoPath());
         w.git.fetch(new URIish(r.repo.toString()), Collections.<RefSpec>emptyList());
-        assertTrue(sha1.equals(r.cmd("git rev-list --max-count=1 HEAD")));
+        assertTrue(sha1.equals(r.cmd("git rev-list --no-walk --max-count=1 HEAD")));
     }
 
     public void test_fetch_with_updated_tag() throws Exception {
@@ -1320,19 +1340,19 @@ public abstract class GitAPITestCase extends TestCase {
         r.init();
         r.commitEmpty("init");
         r.tag("t");
-        String sha1 = r.cmd("git rev-list --max-count=1 t");
+        String sha1 = r.cmd("git rev-list --no-walk --max-count=1 t");
 
         w.init();
         w.cmd("git remote add origin " + r.repoPath());
         w.git.fetch("origin", new RefSpec[] {null});
-        assertTrue(sha1.equals(r.cmd("git rev-list --max-count=1 t")));
+        assertTrue(sha1.equals(r.cmd("git rev-list --no-walk --max-count=1 t")));
 
         r.touch("file.txt");
         r.git.add("file.txt");
         r.git.commit("update");
         r.tag("-d t");
         r.tag("t");
-        sha1 = r.cmd("git rev-list --max-count=1 t");
+        sha1 = r.cmd("git rev-list --no-walk --max-count=1 t");
         w.git.fetch("origin", new RefSpec[] {null});
         assertTrue(sha1.equals(r.cmd("git rev-list --max-count=1 t")));
 
@@ -2417,7 +2437,7 @@ public abstract class GitAPITestCase extends TestCase {
 
         /* Confirm first checkout */
         String pomContent = w.contentOf("pom.xml");
-        assertTrue("Missing jacoco ref in master pom : " + pomContent, pomContent.contains("jacoco"));
+        assertTrue("Missing inceptionYear ref in master pom : " + pomContent, pomContent.contains("inceptionYear"));
         assertFalse("Found untracked file", w.file("untracked-file").exists());
 
         /* Modify the pom file by adding a comment */
@@ -2439,9 +2459,9 @@ public abstract class GitAPITestCase extends TestCase {
         }
         cmd.execute();
 
-        /* Tracked file should not contain added comment, nor the jacoco reference */
+        /* Tracked file should not contain added comment, nor the inceptionYear reference */
         pomContent = w.contentOf("pom.xml");
-        assertFalse("Found jacoco ref in 1.4.x pom : " + pomContent, pomContent.contains("jacoco"));
+        assertFalse("Found inceptionYear ref in 1.4.x pom : " + pomContent, pomContent.contains("inceptionYear"));
         assertFalse("Found comment in 1.4.x pom", pomContent.contains(comment));
         assertTrue("Missing untracked file", w.file("untracked-file").exists());
     }
@@ -3376,7 +3396,7 @@ public abstract class GitAPITestCase extends TestCase {
         assertEquals("heads is " + heads, heads.get("refs/heads/master"), master1);
         ObjectId getSubmodules1 = w.git.getHeadRev(localMirror(), "X/g*[b]m*dul*"); // matches tests/getSubmodules
         assertEquals("heads is " + heads, heads.get("refs/heads/tests/getSubmodules"), getSubmodules1);
-        ObjectId getSubmodules = w.git.getHeadRev(localMirror(), "N/*od*");
+        ObjectId getSubmodules = w.git.getHeadRev(localMirror(), "N/*et*mod*");
         assertEquals("heads is " + heads, heads.get("refs/heads/tests/getSubmodules"), getSubmodules);
     }
 
@@ -4194,7 +4214,7 @@ public abstract class GitAPITestCase extends TestCase {
             assertFalse("null is a bare repository", w.igit().isBareRepository(null));
             fail("Did not throw expected exception");
         } catch (GitException ge) {
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 
@@ -4205,7 +4225,7 @@ public abstract class GitAPITestCase extends TestCase {
             assertTrue("null is not a bare repository", w.igit().isBareRepository(null));
             fail("Did not throw expected exception");
         } catch (GitException ge) {
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 
@@ -4269,7 +4289,7 @@ public abstract class GitAPITestCase extends TestCase {
                 fail("Did not throw expected exception");
             }
         } catch (GitException ge) {
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 
@@ -4305,7 +4325,7 @@ public abstract class GitAPITestCase extends TestCase {
             assertFalse("CliGitAPIImpl did not throw expected exception", w.igit() instanceof CliGitAPIImpl);
         } catch (GitException ge) {
             /* Only enters this path for CliGit */
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 
@@ -4320,7 +4340,7 @@ public abstract class GitAPITestCase extends TestCase {
             assertFalse("CliGitAPIImpl did not throw expected exception", w.igit() instanceof CliGitAPIImpl);
         } catch (GitException ge) {
             /* Only enters this path for CliGit */
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 
@@ -4334,7 +4354,7 @@ public abstract class GitAPITestCase extends TestCase {
             assertFalse("CliGitAPIImpl did not throw expected exception", w.igit() instanceof CliGitAPIImpl);
         } catch (GitException ge) {
             /* Only enters this path for CliGit */
-            assertTrue("Wrong exception message: " + ge, ge.getMessage().contains("Not a git repository"));
+            assertTrue("Wrong exception message: " + ge, ge.getMessage().toLowerCase().contains("not a git repository"));
         }
     }
 

@@ -11,7 +11,7 @@ public interface SubmoduleStatusCommand extends GitCommand
      * @param recursive if true, will recursively check submodules status (requires git&gt;=1.6.5)
      * @return a {@link org.jenkinsci.plugins.gitclient.SubmoduleUpdateCommand} object.
      */
-    SubmoduleStatusCommand recursive(boolean recursive);
+	SubmoduleStatusCommand recursive(boolean recursive);
 
     /**
      * Sets the {@link java.io.OutputStream} that receives the status.
@@ -19,5 +19,5 @@ public interface SubmoduleStatusCommand extends GitCommand
      * @param w a {@link java.io.Writer} object.
      * @return a {@link org.jenkinsci.plugins.gitclient.SubmoduleStatusCommand} object.
      */
-    SubmoduleStatusCommand to(Writer w);
+	SubmoduleStatusCommand to(Writer w);
 }
